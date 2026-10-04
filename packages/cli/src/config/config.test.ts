@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as os from 'node:os';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
   DEFAULT_FILE_FILTERING_OPTIONS,
@@ -246,6 +247,28 @@ describe('parseArguments', () => {
 
     const parsedArgs = await parseArguments(createTestMergedSettings());
     expect(parsedArgs.sessionId).toBe('test-uuid-1234');
+  });
+
+  describe('thinking and schema options', () => {
+    it('should parse --thinking-budget and --thinking-level', async () => {
+      process.argv = [
+        'node',
+        'script.js',
+        '--thinking-budget',
+        '1024',
+        '--thinking-level',
+        'high',
+      ];
+      const parsedArgs = await parseArguments(createTestMergedSettings());
+      expect(parsedArgs.thinkingBudget).toBe(1024);
+      expect(parsedArgs.thinkingLevel).toBe('high');
+    });
+
+    it('should parse --output-schema option', async () => {
+      process.argv = ['node', 'script.js', '--output-schema', 'schema.json'];
+      const parsedArgs = await parseArguments(createTestMergedSettings());
+      expect(parsedArgs.outputSchema).toBe('schema.json');
+    });
   });
 
   describe('worktree', () => {
@@ -3882,5 +3905,138 @@ describe('loadCliConfig acpMode and clientName', () => {
     );
     expect(config.getAcpMode()).toBe(false);
     expect(config.getClientName()).toBe('tui');
+  });
+
+  describe('thinking and structured output options', () => {
+    it('should apply thinking-budget to model config override', async () => {
+      process.argv = ['node', 'script.js', '--thinking-budget', '2048'];
+      const argv = await parseArguments(createTestMergedSettings());
+      const config = await loadCliConfig(
+        createTestMergedSettings(),
+        'test-session',
+        argv,
+      );
+
+      const resolved = config
+        .getModelConfigService()
+        .getResolvedConfig({ model: config.getModel() });
+      expect(
+        resolved.generateContentConfig?.thinkingConfig?.thinkingBudget,
+      ).toBe(2048);
+    });
+
+    it('should apply thinking-level to model config override in uppercase', async () => {
+      process.argv = ['node', 'script.js', '--thinking-level', 'low'];
+      const argv = await parseArguments(createTestMergedSettings());
+      const config = await loadCliConfig(
+        createTestMergedSettings(),
+        'test-session',
+        argv,
+      );
+
+      const resolved = config
+        .getModelConfigService()
+        .getResolvedConfig({ model: config.getModel() });
+      expect(
+        resolved.generateContentConfig?.thinkingConfig?.thinkingLevel,
+      ).toBe('LOW');
+    });
+
+    it('should apply both thinking-budget and thinking-level together', async () => {
+      process.argv = [
+        'node',
+        'script.js',
+        '--thinking-budget',
+        '4096',
+        '--thinking-level',
+        'high',
+      ];
+      const argv = await parseArguments(createTestMergedSettings());
+      const config = await loadCliConfig(
+        createTestMergedSettings(),
+        'test-session',
+        argv,
+      );
+
+      const resolved = config
+        .getModelConfigService()
+        .getResolvedConfig({ model: config.getModel() });
+      expect(
+        resolved.generateContentConfig?.thinkingConfig?.thinkingBudget,
+      ).toBe(4096);
+      expect(
+        resolved.generateContentConfig?.thinkingConfig?.thinkingLevel,
+      ).toBe('HIGH');
+    });
+
+    it('should throw FatalConfigError if --output-schema is used without -p/--prompt', async () => {
+      process.argv = ['node', 'script.js', '--output-schema', 'schema.json'];
+      const argv = await parseArguments(createTestMergedSettings());
+
+      await expect(
+        loadCliConfig(createTestMergedSettings(), 'test-session', argv),
+      ).rejects.toThrow(
+        'The --output-schema flag is only supported in non-interactive mode. Please use -p/--prompt.',
+      );
+    });
+
+    it('should throw FatalConfigError if schema file does not exist or is invalid JSON', async () => {
+      process.argv = [
+        'node',
+        'script.js',
+        '-p',
+        'hello',
+        '--output-schema',
+        'non-existent-schema.json',
+      ];
+      const argv = await parseArguments(createTestMergedSettings());
+
+      await expect(
+        loadCliConfig(createTestMergedSettings(), 'test-session', argv),
+      ).rejects.toThrow(
+        'Failed to parse schema file at non-existent-schema.json',
+      );
+    });
+
+    it('should load and apply valid output-schema with -p/--prompt', async () => {
+      const mockSchema = {
+        type: 'object',
+        properties: {
+          name: { type: 'string' },
+        },
+        required: ['name'],
+      };
+
+      const spy = vi
+        .spyOn(fs, 'readFileSync')
+        .mockReturnValue(JSON.stringify(mockSchema));
+
+      process.argv = [
+        'node',
+        'script.js',
+        '-p',
+        'hello',
+        '--output-schema',
+        'valid-schema.json',
+      ];
+      const argv = await parseArguments(createTestMergedSettings());
+      const config = await loadCliConfig(
+        createTestMergedSettings(),
+        'test-session',
+        argv,
+      );
+
+      const resolved = config
+        .getModelConfigService()
+        .getResolvedConfig({ model: config.getModel() });
+      expect(resolved.generateContentConfig?.responseMimeType).toBe(
+        'application/json',
+      );
+      expect(resolved.generateContentConfig?.responseSchema).toEqual(
+        mockSchema,
+      );
+
+      spy.mockRestore();
+    });
   });
 });

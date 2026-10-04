@@ -567,6 +567,9 @@ describe('gemini.tsx main function kitty protocol', () => {
       acceptRawOutputRisk: undefined,
       isCommand: undefined,
       skipTrust: undefined,
+      thinkingBudget: undefined,
+      thinkingLevel: undefined,
+      outputSchema: undefined,
     });
 
     await act(async () => {
@@ -627,6 +630,9 @@ describe('gemini.tsx main function kitty protocol', () => {
       acceptRawOutputRisk: undefined,
       isCommand: undefined,
       skipTrust: undefined,
+      thinkingBudget: undefined,
+      thinkingLevel: undefined,
+      outputSchema: undefined,
     });
 
     await act(async () => {

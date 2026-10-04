@@ -7,7 +7,13 @@
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import process from 'node:process';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
+import type {
+  GenerateContentConfig,
+  ThinkingConfig,
+  ThinkingLevel,
+} from '@google/genai';
 import { execa } from 'execa';
 import { mcpCommand } from '../commands/mcp.js';
 import { extensionsCommand } from '../commands/extensions.js';
@@ -46,6 +52,7 @@ import {
   type HookDefinition,
   type HookEventName,
   type OutputFormat,
+  type ModelConfigServiceConfig,
   detectIdeFromEnv,
 } from '@google/gemini-cli-core';
 import {
@@ -111,6 +118,9 @@ export interface CliArgs {
   acceptRawOutputRisk: boolean | undefined;
   skipTrust: boolean | undefined;
   isCommand: boolean | undefined;
+  thinkingBudget: number | undefined;
+  thinkingLevel: string | undefined;
+  outputSchema: string | undefined;
 }
 
 /**
@@ -297,6 +307,23 @@ export async function parseArguments(
           nargs: 1,
           description:
             'Run in non-interactive (headless) mode with the given prompt. Appended to input on stdin (if any).',
+        })
+        .option('thinking-budget', {
+          type: 'number',
+          nargs: 1,
+          description: 'Set a specific token budget for model reasoning',
+        })
+        .option('thinking-level', {
+          type: 'string',
+          nargs: 1,
+          choices: ['none', 'low', 'medium', 'high'],
+          description: 'Set the level of reasoning effort',
+        })
+        .option('output-schema', {
+          type: 'string',
+          nargs: 1,
+          description:
+            'Path to a JSON Schema file to constrain the model output format',
         })
         .option('prompt-interactive', {
           alias: 'i',
@@ -956,6 +983,56 @@ export async function loadCliConfig(
     enabled: !!profileSelector,
   };
 
+  const cliModelConfigOverrides: GenerateContentConfig = {};
+
+  if (argv.thinkingBudget !== undefined || argv.thinkingLevel !== undefined) {
+    const thinkingConfig: ThinkingConfig = {};
+    if (argv.thinkingBudget !== undefined) {
+      thinkingConfig.thinkingBudget = argv.thinkingBudget;
+    }
+    if (argv.thinkingLevel !== undefined) {
+      thinkingConfig.thinkingLevel =
+        // yargs `choices` restricts the input; upper-case it to the API enum.
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
+        argv.thinkingLevel.toUpperCase() as ThinkingLevel;
+    }
+    cliModelConfigOverrides.thinkingConfig = thinkingConfig;
+  }
+
+  if (argv.outputSchema) {
+    if (!argv.prompt) {
+      throw new FatalConfigError(
+        'The --output-schema flag is only supported in non-interactive mode. Please use -p/--prompt.',
+      );
+    }
+    try {
+      const schemaContent = fs.readFileSync(argv.outputSchema, 'utf-8');
+      cliModelConfigOverrides.responseMimeType = 'application/json';
+      cliModelConfigOverrides.responseSchema = JSON.parse(
+        schemaContent,
+      ) as unknown;
+    } catch (e) {
+      throw new FatalConfigError(
+        `Failed to parse schema file at ${argv.outputSchema}: ${getErrorMessage(e)}`,
+      );
+    }
+  }
+
+  let modelConfigServiceConfig: ModelConfigServiceConfig | undefined =
+    settings.modelConfigs;
+  if (Object.keys(cliModelConfigOverrides).length > 0) {
+    modelConfigServiceConfig = {
+      ...settings.modelConfigs,
+      customOverrides: [
+        ...(settings.modelConfigs?.customOverrides ?? []),
+        {
+          match: { overrideScope: 'core' },
+          modelConfig: { generateContentConfig: cliModelConfigOverrides },
+        },
+      ],
+    };
+  }
+
   return new Config({
     acpMode: isAcpMode,
     clientName,
@@ -1106,7 +1183,7 @@ export async function loadCliConfig(
     rawOutput: argv.rawOutput,
     acceptRawOutputRisk: argv.acceptRawOutputRisk,
     dynamicModelConfiguration: settings.experimental?.dynamicModelConfiguration,
-    modelConfigServiceConfig: settings.modelConfigs,
+    modelConfigServiceConfig,
     // TODO: loading of hooks based on workspace trust
     enableHooks: settings.hooksConfig.enabled,
     enableHooksUI: settings.hooksConfig.enabled,

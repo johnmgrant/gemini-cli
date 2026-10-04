@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { ThinkingLevel } from '@google/genai';
 import {
   DEFAULT_FILE_FILTERING_OPTIONS,
   OutputFormat,
@@ -262,6 +263,25 @@ describe('parseArguments', () => {
       const parsedArgs = await parseArguments(createTestMergedSettings());
       expect(parsedArgs.thinkingBudget).toBe(1024);
       expect(parsedArgs.thinkingLevel).toBe('high');
+    });
+
+    it('should reject invalid --thinking-level values', async () => {
+      process.argv = ['node', 'script.js', '--thinking-level', 'none'];
+
+      vi.spyOn(process, 'exit').mockImplementation(() => {
+        throw new Error('process.exit called');
+      });
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const debugErrorSpy = vi
+        .spyOn(debugLogger, 'error')
+        .mockImplementation(() => {});
+
+      await expect(parseArguments(createTestMergedSettings())).rejects.toThrow(
+        'process.exit called',
+      );
+      expect(debugErrorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Invalid values:'),
+      );
     });
 
     it('should parse --output-schema option', async () => {
@@ -3925,22 +3945,30 @@ describe('loadCliConfig acpMode and clientName', () => {
       ).toBe(2048);
     });
 
-    it('should apply thinking-level to model config override in uppercase', async () => {
-      process.argv = ['node', 'script.js', '--thinking-level', 'low'];
-      const argv = await parseArguments(createTestMergedSettings());
-      const config = await loadCliConfig(
-        createTestMergedSettings(),
-        'test-session',
-        argv,
-      );
+    it.each([
+      ['minimal', ThinkingLevel.MINIMAL],
+      ['low', ThinkingLevel.LOW],
+      ['medium', ThinkingLevel.MEDIUM],
+      ['high', ThinkingLevel.HIGH],
+    ])(
+      'should map --thinking-level %s to ThinkingLevel %s',
+      async (level, expected) => {
+        process.argv = ['node', 'script.js', '--thinking-level', level];
+        const argv = await parseArguments(createTestMergedSettings());
+        const config = await loadCliConfig(
+          createTestMergedSettings(),
+          'test-session',
+          argv,
+        );
 
-      const resolved = config
-        .getModelConfigService()
-        .getResolvedConfig({ model: config.getModel() });
-      expect(
-        resolved.generateContentConfig?.thinkingConfig?.thinkingLevel,
-      ).toBe('LOW');
-    });
+        const resolved = config
+          .getModelConfigService()
+          .getResolvedConfig({ model: config.getModel() });
+        expect(
+          resolved.generateContentConfig?.thinkingConfig?.thinkingLevel,
+        ).toBe(expected);
+      },
+    );
 
     it('should apply both thinking-budget and thinking-level together', async () => {
       process.argv = [

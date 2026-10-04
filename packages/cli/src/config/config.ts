@@ -9,10 +9,10 @@ import { hideBin } from 'yargs/helpers';
 import process from 'node:process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import type {
-  GenerateContentConfig,
-  ThinkingConfig,
+import {
   ThinkingLevel,
+  type GenerateContentConfig,
+  type ThinkingConfig,
 } from '@google/genai';
 import { execa } from 'execa';
 import { mcpCommand } from '../commands/mcp.js';
@@ -122,6 +122,16 @@ export interface CliArgs {
   thinkingLevel: string | undefined;
   outputSchema: string | undefined;
 }
+
+/**
+ * Maps `--thinking-level` choices to the API's ThinkingLevel values.
+ */
+const THINKING_LEVELS: Record<string, ThinkingLevel> = {
+  minimal: ThinkingLevel.MINIMAL,
+  low: ThinkingLevel.LOW,
+  medium: ThinkingLevel.MEDIUM,
+  high: ThinkingLevel.HIGH,
+};
 
 /**
  * Helper to coerce comma-separated or multiple flag values into a flat array.
@@ -316,7 +326,7 @@ export async function parseArguments(
         .option('thinking-level', {
           type: 'string',
           nargs: 1,
-          choices: ['none', 'low', 'medium', 'high'],
+          choices: Object.keys(THINKING_LEVELS),
           description: 'Set the level of reasoning effort',
         })
         .option('output-schema', {
@@ -991,10 +1001,7 @@ export async function loadCliConfig(
       thinkingConfig.thinkingBudget = argv.thinkingBudget;
     }
     if (argv.thinkingLevel !== undefined) {
-      thinkingConfig.thinkingLevel =
-        // yargs `choices` restricts the input; upper-case it to the API enum.
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-        argv.thinkingLevel.toUpperCase() as ThinkingLevel;
+      thinkingConfig.thinkingLevel = THINKING_LEVELS[argv.thinkingLevel];
     }
     cliModelConfigOverrides.thinkingConfig = thinkingConfig;
   }
